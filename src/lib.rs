@@ -89,7 +89,7 @@ impl Plugin for Effect {
             let len = &channel_samples.len();
             for sample in channel_samples {
                 //*sample *= gain;
-                *sample = lowpass(&index, len)
+                *sample *= lowpass(&index, len)
             }
         }
 
@@ -106,3 +106,11 @@ fn lowpass(sample_index: &usize, max: &usize) -> f32 {
     // f(x) = -x + 1
     step as f32 * -1. + 1.
 }
+
+impl Vst3Plugin for Effect {
+    const VST3_CLASS_ID: [u8; 16] = *b"TestEffect1Kukul";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Fx, Vst3SubCategory::Tools];
+}
+
+nih_export_vst3!(Effect);
