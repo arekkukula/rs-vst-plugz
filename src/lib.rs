@@ -7,6 +7,8 @@ struct Effect {
     sample_rate: f32,
 }
 
+const GAIN_MAX: f32 = 0.75;
+
 #[derive(Params)]
 struct EffectParams {
     #[id = "effect_gain"]
@@ -17,7 +19,9 @@ impl Default for Effect {
     fn default() -> Self {
         Self {
             params: Arc::new(EffectParams {
-                gain: FloatParam::new("Gain", 0.5, FloatRange::Linear { min: 0., max: 1. }),
+                // max 0.75 is plenty, around after that point, strange behavior starts to appear,
+                // like comb filtering, bitcrushing etc. In short, not worth it.
+                gain: FloatParam::new("Gain", 0., FloatRange::Linear { min: 0., max: GAIN_MAX }),
             }),
             sample_rate: 44100f32,
         }
@@ -92,31 +96,16 @@ impl Plugin for Effect {
     ) -> ProcessStatus {
         let mut buffer_iter = buffer.iter_samples();
         let mut first_sample = buffer_iter.next().unwrap();
-        #[allow(unused_assignments)]
-        let mut prev_sample_left = 0f32;
-        #[allow(unused_assignments)]
-        let mut prev_sample_right = 0f32;
-        unsafe {
-            prev_sample_left = first_sample.get_unchecked_mut(0).clone();
-            prev_sample_right = first_sample.get_unchecked_mut(1).clone();
-        }
+        // FIXME: this is really unsafe. Potentially could crash DAW.
+        let mut prev_sample: Vec<f32> = vec![*first_sample.get_mut(0).unwrap(), *first_sample.get_mut(1).unwrap()];
 
-        let cutoff_freq = 2000f32;
-        let dt = 1.0 / self.sample_rate;
-        let RC = 1.0 / (2.0 * PI * cutoff_freq);
-        let alpha = dt / (dt + RC);
-        for mut channel_samples in buffer_iter {
+        for  channel_samples in buffer_iter {
             let gain = self.params.gain.smoothed.next();
-            unsafe {
-                let left = channel_samples.get_unchecked_mut(0).clone();
-                let right = channel_samples.get_unchecked_mut(1).clone();
-                let prev_left = prev_sample_left;
-                let prev_right = prev_sample_right;
-
-                *channel_samples.get_unchecked_mut(0) = alpha * left + (1. - alpha) * prev_left;
-                *channel_samples.get_unchecked_mut(1) = alpha * right + (1. - alpha) * prev_right;
-                prev_sample_left = *channel_samples.get_unchecked_mut(0);
-                prev_sample_right = *channel_samples.get_unchecked_mut(1);
+            for (index, sample) in channel_samples.into_iter().enumerate() {
+                // simple weighted average of current sample and previous sample
+                let new_sample_value = (1f32 - gain) * *sample + gain * prev_sample[index];
+                *sample = new_sample_value;
+                prev_sample[index] = new_sample_value;
             }
         }
         ProcessStatus::Normal
