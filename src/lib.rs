@@ -7,12 +7,12 @@ struct Effect {
     sample_rate: f32,
 }
 
-const GAIN_MAX: f32 = 0.75;
-
 #[derive(Params)]
 struct EffectParams {
-    #[id = "effect_gain"]
-    pub gain: FloatParam,
+    #[id = "makeup"]
+    pub makeup: FloatParam,
+    #[id = "butterworth_lp"]
+    pub butterworth_freq: FloatParam,
 }
 
 impl Default for Effect {
@@ -21,7 +21,27 @@ impl Default for Effect {
             params: Arc::new(EffectParams {
                 // max 0.75 is plenty, around after that point, strange behavior starts to appear,
                 // like comb filtering, bitcrushing etc. In short, not worth it.
-                gain: FloatParam::new("Gain", 0., FloatRange::Linear { min: 0., max: GAIN_MAX }),
+                makeup: FloatParam::new(
+                    "Makeup",
+                    util::db_to_gain(0.),
+                    FloatRange::Skewed {
+                        min: util::db_to_gain(-24.),
+                        max: util::db_to_gain(24.),
+                        factor: FloatRange::gain_skew_factor(-24., 24.),
+                    },
+                )
+                .with_smoother(SmoothingStyle::Logarithmic(50.0))
+                .with_unit(" dB")
+                .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+                .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+                butterworth_freq: FloatParam::new(
+                    "Butterworth LP Freq",
+                    20_000f32,
+                    FloatRange::Linear {
+                        min: 20.,
+                        max: 20_000.,
+                    },
+                ),
             }),
             sample_rate: 44100f32,
         }
@@ -48,6 +68,7 @@ impl Plugin for Effect {
         // are generated as needed. This layout will be called 'Stereo', while the other one is
         // given the name 'Mono' based no the number of input and output channels.
         names: PortNames::const_default(),
+        ..AudioIOLayout::const_default()
     }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
@@ -74,7 +95,6 @@ impl Plugin for Effect {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
-
         true
     }
 
@@ -94,20 +114,25 @@ impl Plugin for Effect {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let mut buffer_iter = buffer.iter_samples();
-        let mut first_sample = buffer_iter.next().unwrap();
-        // FIXME: this is really unsafe. Potentially could crash DAW.
-        let mut prev_sample: Vec<f32> = vec![*first_sample.get_mut(0).unwrap(), *first_sample.get_mut(1).unwrap()];
+        let buffer_slices = buffer.as_slice();
 
-        for  channel_samples in buffer_iter {
-            let gain = self.params.gain.smoothed.next();
-            for (index, sample) in channel_samples.into_iter().enumerate() {
-                // simple weighted average of current sample and previous sample
-                let new_sample_value = (1f32 - gain) * *sample + gain * prev_sample[index];
-                *sample = new_sample_value;
-                prev_sample[index] = new_sample_value;
-            }
-        }
+        let (left_channel, right_channel) = buffer_slices.split_at_mut(1);
+        let lp_left = left_channel.get_mut(0).unwrap();
+        let lp_right = right_channel.get_mut(0).unwrap();
+        lowpass_filter(
+            lp_left,
+            self.sample_rate,
+            self.params.butterworth_freq.smoothed.next(),
+        );
+        lowpass_filter(
+            lp_right,
+            self.sample_rate,
+            self.params.butterworth_freq.smoothed.next(),
+        );
+
+        makeup(lp_left, self.params.makeup.smoothed.next());
+        makeup(lp_right, self.params.makeup.smoothed.next());
+
         ProcessStatus::Normal
     }
 
@@ -116,13 +141,28 @@ impl Plugin for Effect {
     fn deactivate(&mut self) {}
 }
 
+fn makeup(data: &mut [f32], db: f32) {
+    for sample in data {
+        *sample *= db;
+    }
+}
 
+pub fn lowpass_filter(data: &mut [f32], sampling_rate: f32, cutoff_frequency: f32) {
+    // https://en.wikipedia.org/wiki/Low-pass_filter#Simple_infinite_impulse_response_filter
+    let rc = 1.0 / (cutoff_frequency * 2.0 * PI);
+    // time per sample
+    let dt = 1.0 / sampling_rate;
+    let alpha = dt / (rc + dt);
+
+    data[0] *= alpha;
+    for i in 1..data.len() {
+        data[i] = data[i - 1] + alpha * (data[i] - data[i - 1]);
+    }
+}
 
 impl Vst3Plugin for Effect {
     const VST3_CLASS_ID: [u8; 16] = *b"TestEffect1Kukul";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
-        Vst3SubCategory::Fx,
-    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx];
 }
 
 nih_export_vst3!(Effect);
