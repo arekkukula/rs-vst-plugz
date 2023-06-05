@@ -101,20 +101,6 @@ impl Plugin for Effect {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // let (left_channel, right_channel) = buffer.as_slice().split_at_mut(1);
-
-        // lowpass_filter(
-        //     left_channel[0],
-        //     self.sample_rate,
-        //     self.params.butterworth_freq.value(),
-        // );
-
-        // lowpass_filter(
-        //     right_channel[0],
-        //     self.sample_rate,
-        //     self.params.butterworth_freq.value(),
-        // );
-
         for mut channel_samples in buffer.iter_samples() {
             for (channel, sample) in channel_samples.iter_mut().enumerate() {
                 *sample = lowpass_two_samples(
@@ -125,11 +111,10 @@ impl Plugin for Effect {
                 );
 
                 self.last[channel] = *sample;
+
+                makeup(sample, self.params.makeup.value());
             }
         }
-
-        // makeup(lp_left, self.params.makeup.value());
-        // makeup(lp_right, self.params.makeup.value());
 
         ProcessStatus::Normal
     }
