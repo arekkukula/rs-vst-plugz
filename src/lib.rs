@@ -1,13 +1,15 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 mod butterworth_lp;
-use butterworth_lp::lowpass_filter;
+use butterworth_lp::{lowpass_filter, lowpass_two_samples};
 mod makeup;
 use makeup::makeup;
 
 struct Effect {
     params: Arc<EffectParams>,
     sample_rate: f32,
+
+    last: [f32; 2],
 }
 
 #[derive(Params)]
@@ -21,6 +23,7 @@ struct EffectParams {
 impl Default for Effect {
     fn default() -> Self {
         Self {
+            last: [0f32, 0f32],
             params: Arc::new(EffectParams {
                 makeup: FloatParam::new(
                     "Makeup",
@@ -37,15 +40,15 @@ impl Default for Effect {
                 .with_string_to_value(formatters::s2v_f32_gain_to_db()),
                 butterworth_freq: FloatParam::new(
                     "Butterworth LP Freq",
-                    20_000f32,
+                    25_000f32,
                     FloatRange::Skewed {
                         min: 20.,
-                        max: 20_000.,
+                        max: 25_000.,
                         factor: 0.3,
                     },
                 ),
             }),
-            sample_rate: 44100f32,
+            sample_rate: 0.,
         }
     }
 }
@@ -74,6 +77,10 @@ impl Plugin for Effect {
     type SysExMessage = ();
     type BackgroundTask = ();
 
+    fn reset(&mut self) {
+        self.last[0] = 0f32;
+        self.last[1] = 0f32;
+    }
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -94,19 +101,32 @@ impl Plugin for Effect {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let (left_channel, right_channel) = buffer.as_slice().split_at_mut(1);
+        // let (left_channel, right_channel) = buffer.as_slice().split_at_mut(1);
 
-        lowpass_filter(
-            left_channel[0],
-            self.sample_rate,
-            self.params.butterworth_freq.value(),
-        );
+        // lowpass_filter(
+        //     left_channel[0],
+        //     self.sample_rate,
+        //     self.params.butterworth_freq.value(),
+        // );
 
-        lowpass_filter(
-            right_channel[0],
-            self.sample_rate,
-            self.params.butterworth_freq.value(),
-        );
+        // lowpass_filter(
+        //     right_channel[0],
+        //     self.sample_rate,
+        //     self.params.butterworth_freq.value(),
+        // );
+
+        for mut channel_samples in buffer.iter_samples() {
+            for (channel, sample) in channel_samples.iter_mut().enumerate() {
+                *sample = lowpass_two_samples(
+                    *sample,
+                    self.last[channel],
+                    self.sample_rate,
+                    self.params.butterworth_freq.value(),
+                );
+
+                self.last[channel] = *sample;
+            }
+        }
 
         // makeup(lp_left, self.params.makeup.value());
         // makeup(lp_right, self.params.makeup.value());
