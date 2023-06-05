@@ -41,7 +41,7 @@ impl Default for Effect {
                     FloatRange::Skewed {
                         min: 20.,
                         max: 20_000.,
-                        factor: -2.0,
+                        factor: 0.3,
                     },
                 ),
             }),
@@ -94,25 +94,22 @@ impl Plugin for Effect {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let buffer_slices = buffer.as_slice();
-        let (left_channel, right_channel) = buffer_slices.split_at_mut(1);
-        let lp_left = left_channel.get_mut(0).unwrap();
-        let lp_right = right_channel.get_mut(0).unwrap();
+        let (left_channel, right_channel) = buffer.as_slice().split_at_mut(1);
 
         lowpass_filter(
-            lp_left,
+            left_channel[0],
             self.sample_rate,
-            self.params.butterworth_freq.smoothed.next(),
+            self.params.butterworth_freq.value(),
         );
 
         lowpass_filter(
-            lp_right,
+            right_channel[0],
             self.sample_rate,
-            self.params.butterworth_freq.smoothed.next(),
+            self.params.butterworth_freq.value(),
         );
 
-        makeup(lp_left, self.params.makeup.smoothed.next());
-        makeup(lp_right, self.params.makeup.smoothed.next());
+        // makeup(lp_left, self.params.makeup.value());
+        // makeup(lp_right, self.params.makeup.value());
 
         ProcessStatus::Normal
     }
